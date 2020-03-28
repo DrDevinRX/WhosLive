@@ -17,14 +17,11 @@ namespace WhosLive.Modules
         private ulong GuildId = Program.GuildId;
         private readonly Twitch twitch;
         private LiteDatabase database { get; set; }
-
         private readonly object dbLock = new object();
-
         private readonly TimeSpan WaitPeriod = TimeSpan.FromSeconds(10);
-
         private readonly DiscordSocketClient client;
-
         private SocketGuild guild;
+        private const ulong YinId = 132557773987643392;
 
         public Commands(LiteDatabase db, DiscordSocketClient client)
         {
@@ -32,6 +29,7 @@ namespace WhosLive.Modules
             database = db;
             twitch = new Twitch();
 
+            // Run the update and query threads
             Task.Run(UpdateAndCheckStreamers);
         }
 
@@ -48,6 +46,9 @@ namespace WhosLive.Modules
             while (true)
             {
                 // Task 1: Check if streamers are streaming
+                // Task 2: Update the messages
+                // NOTE: still don't know how to dump the message cache
+                //       to check if message truly exists in the channel or not
                 await Task.Delay(WaitPeriod);
                 await Task.Run(CheckStreamerStatus);
                 await Task.Delay(TimeSpan.FromMinutes(1));
@@ -163,7 +164,7 @@ namespace WhosLive.Modules
                         if (msg == null)
                         {
                             var user = (liveChannel as ITextChannel).GetUserAsync(streamer.Id).Result;
-                            var content = string.Format(Twitch.DefaultStreamMessage, $"**{(user as IGuildUser)?.Nickname}**", streamer.StreamUrl);
+                            var content = string.Format(Twitch.DefaultStreamMessage, $"**{(user as IGuildUser)?.Nickname ?? "Someone"}**", streamer.StreamUrl);
                             var embed = CreateMessageEmbed(streamer).Result;
                             var newMsg = liveChannel.SendMessageAsync(content, embed: embed).Result;
                             streamer.MessageId = (msg.Result as IUserMessage).Id;
@@ -216,15 +217,16 @@ namespace WhosLive.Modules
                 return Task.CompletedTask;
 
             LiteCollection<Streamer> streamers = null;
+            const string twitchRegex = @"https?:\/\/.*twitch.tv\/(.*)";
 
             lock (dbLock)
             {
                 streamers = database.GetCollection<Streamer>("streamers");
             }
 
-            if (new Regex(@"https?:\/\/.*twitch.tv\/(.*)").IsMatch(twitchUrl))
+            if (new Regex(twitchRegex).IsMatch(twitchUrl))
             {
-                var matches = new Regex(@"https?:\/\/.*twitch.tv\/(.*)").Matches(twitchUrl);
+                var matches = new Regex(twitchRegex).Matches(twitchUrl);
                 twitchUrl = matches[0].Groups[1].Value;
             }
 
@@ -304,11 +306,11 @@ namespace WhosLive.Modules
 
             if (delete > 0)
             {
-                ReplyAsync($"User {user.Mention} has been deleted from database. Status = {delete}");
+                ReplyAsync($"User {(user as IGuildUser)?.Nickname ?? "User"} has been deleted from database. Status = {delete}");
             }
             else
             {
-                ReplyAsync($"Failed to delete user {(user as IGuildUser).Nickname} from the database. Status = {delete}");
+                ReplyAsync($"Failed to delete user {(user as IGuildUser)?.Nickname ?? "User"} from the database. Status = {delete}");
             }
 
             return Task.CompletedTask;
@@ -327,6 +329,12 @@ namespace WhosLive.Modules
             {
 
                 var guilduser = Context.Message.Author as Discord.IGuildUser;
+
+                if (guilduser == null)
+                {
+                    ReplyAsync("Guild User invalid.");
+                    return Task.CompletedTask;
+                }
 
                 if (!guilduser.GuildPermissions.ManageChannels)
                 {
@@ -424,12 +432,14 @@ namespace WhosLive.Modules
         [Command("delete"), RequireUserPermission(GuildPermission.ManageMessages), Alias(new[] { "del", "rm", "clear" })]
         public Task DeleteMessages(int amt = 100)
         {
+            // Delete the delete command message
             var firstMessage = Context.Channel.GetMessagesAsync(1).Flatten().OrderByDescending(x => x.Timestamp).FirstOrDefault().Result;
 
             Context.Channel.DeleteMessageAsync(firstMessage);
 
             amt = (amt > 100) ? 100 : (amt < 0) ? 0 : amt;
 
+            // Now delete the actual amount requested
             var messages = Context.Channel.GetMessagesAsync(amt).Flatten().OrderByDescending(x => x.Timestamp).ToList().Result;
 
             var requestOptions = new RequestOptions
@@ -450,19 +460,20 @@ namespace WhosLive.Modules
         public Task Info()
         {
             StringBuilder sb = new StringBuilder();
+            var u = Context.Guild.Users.First(x => x.Id == YinId);
             sb.Append($"Hello, I am a bot that will display streaming Twitch channels inside this discord within" +
                 $" the {Context.Guild.GetTextChannel(Program.ChannelId).Mention} channel.\n");
             sb.Append("Ask an admin to be added to the streamer database.\n");
             sb.Append("\n**Commands**:\n");
             sb.Append("custommessage       (acm)    Add a custom stream message for your live message\n");
             sb.Append("removecustommessage (rcm)    Remove custom stream message\n");
-            sb.Append($"Bot created by {Context.Guild.Users.First(x => x.Username == "Yin" && x.DiscriminatorValue == 5666)?.Mention}");
-            sb.Append($"Source: TBD");
+            sb.Append($"Bot created by {$"{u.Username}#{u.Discriminator}" ?? "Yin#5666"}\n");
+            sb.Append($"Source: https://github.com/DrDevinRX/WhosLive");
 
             var embed = new EmbedBuilder()
                 .WithDescription(sb.ToString())
                 .WithImageUrl(Context.Client.CurrentUser.GetAvatarUrl())
-                .WithThumbnailUrl(Context.Guild.Users.First(x => x.Username == "Yin" && x.DiscriminatorValue == 5666)?.GetAvatarUrl())
+                .WithThumbnailUrl(Context.Guild.Users.First(x => x.Id == YinId)?.GetAvatarUrl())
                 .Build();
 
             return ReplyAsync("", embed: embed);

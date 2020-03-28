@@ -1,5 +1,8 @@
 ﻿namespace WhosLive
 {
+    /// <summary>
+    /// Class used for DB structure
+    /// </summary>
     public class Streamer
     {
         /// <summary>
