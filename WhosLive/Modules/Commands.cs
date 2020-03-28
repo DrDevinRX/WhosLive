@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -22,6 +23,7 @@ namespace WhosLive.Modules
         private readonly DiscordSocketClient client;
         private SocketGuild guild;
         private const ulong YinId = 132557773987643392;
+        private static Task UpdateTask = null;
 
         public Commands(LiteDatabase db, DiscordSocketClient client)
         {
@@ -29,8 +31,11 @@ namespace WhosLive.Modules
             database = db;
             twitch = new Twitch();
 
-            // Run the update and query threads
-            Task.Run(UpdateAndCheckStreamers);
+            if (UpdateTask == null)
+            {
+                // Run the update and query threads
+                UpdateTask = Task.Factory.StartNew(UpdateAndCheckStreamers);
+            }
         }
 
         public async Task UpdateAndCheckStreamers()
@@ -42,7 +47,7 @@ namespace WhosLive.Modules
             }
 
             guild = client.GetGuild(GuildId);
-            Console.WriteLine($"Guild = {guild.Name}");
+            Console.WriteLine($"Connected to Guild: '{guild.Name}'");
             while (true)
             {
                 // Task 1: Check if streamers are streaming
@@ -317,6 +322,12 @@ namespace WhosLive.Modules
         }
 
         [Command("custommessage"), Alias("acm")]
+        public Task AddCustomMessage([Remainder]string message)
+        {
+            return AddCustomMessage(Context.Message.Author, message);
+        }
+
+        [Command("custommessage"), Alias("acm")]
         public Task AddCustomMessage(IUser user, [Remainder]string message)
         {
 
@@ -374,6 +385,12 @@ namespace WhosLive.Modules
                 return ReplyAsync("Custom message was added successfully");
             else
                 return ReplyAsync("Could not update database");
+        }
+
+        [Command("removecustommessage"), Alias("rcm")]
+        public Task RemoveCustomMessage()
+        {
+            return RemoveCustomMessage(Context.Message.Author);
         }
 
         [Command("removecustommessage"), Alias("rcm")]
@@ -478,6 +495,32 @@ namespace WhosLive.Modules
 
             return ReplyAsync("", embed: embed);
         }
+
+        [Command("getUsers"), Alias("gu")]
+        public Task ListRegisteredUsers()
+        {
+            LiteCollection<Streamer> db = null;
+            lock (dbLock)
+            {
+                db = database.GetCollection<Streamer>("streamers");
+            }
+
+            if (db == null)
+            {
+                ReplyAsync("Could not access users in database");
+                return Task.CompletedTask;
+            }
+
+            List<string> users = new List<string>();
+
+            foreach (var s in db.FindAll())
+            {
+                users.Add(s.Name);
+            }
+
+            return ReplyAsync($"[ {string.Join(", ", users)} ]");
+        }
+
         #endregion
     }
 }
