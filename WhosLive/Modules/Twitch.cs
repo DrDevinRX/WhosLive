@@ -1,11 +1,10 @@
-﻿using System;
+﻿using Newtonsoft.Json.Linq;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
-using LiteDB;
-using Newtonsoft.Json.Linq;
 
 namespace WhosLive
 {
@@ -13,12 +12,20 @@ namespace WhosLive
     {
         public const string Endpoint = "https://api.twitch.tv/helix/";
         public const string DefaultStreamMessage = "{0} is currently live at <{1}>!";
+        const string TwitchRegex = @"https?:\/\/.*twitch.tv\/(.*)";
 
         public static class HelixStrings
         {
             public const string Users = "users";
             public const string Streams = "streams";
             public const string Games = "games";
+        }
+
+        public enum TwitchUrlState
+        {
+            Ok,
+            Invalid,
+            BadUser
         }
 
         public Task<Dictionary<string, JToken>> TwitchQuery(string helixQuery, string login)
@@ -101,6 +108,33 @@ namespace WhosLive
             }
 
             return Task.FromResult(true);
+        }
+
+        public Task<TwitchUrlState> GetTwitchUrlState(string url)
+        {
+            string user = null;
+
+            if (!url.Contains("http"))
+            {
+                return Task.FromResult(TwitchUrlState.Invalid);
+            }
+
+            if (new Regex(TwitchRegex).IsMatch(url))
+            {
+                var matches = new Regex(TwitchRegex).Matches(url);
+                user = matches[0].Groups[1].Value;
+            }
+            else
+            {
+                return Task.FromResult(TwitchUrlState.Invalid);
+            }
+
+            if (IsUserValid(user).Result)
+            {
+                return Task.FromResult(TwitchUrlState.Ok);
+            }
+
+            return Task.FromResult(TwitchUrlState.BadUser);
         }
     }
 }

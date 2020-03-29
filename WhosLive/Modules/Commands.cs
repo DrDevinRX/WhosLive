@@ -1,15 +1,13 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Text.RegularExpressions;
-using System.Threading.Tasks;
-using Discord;
+﻿using Discord;
 using Discord.Commands;
-using Discord.Rest;
 using Discord.WebSocket;
 using LiteDB;
 using Newtonsoft.Json.Linq;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
 
 namespace WhosLive.Modules
 {
@@ -222,31 +220,22 @@ namespace WhosLive.Modules
                 return Task.CompletedTask;
 
             LiteCollection<Streamer> streamers = null;
-            const string twitchRegex = @"https?:\/\/.*twitch.tv\/(.*)";
 
             lock (dbLock)
             {
                 streamers = database.GetCollection<Streamer>("streamers");
             }
 
-            if (new Regex(twitchRegex).IsMatch(twitchUrl))
-            {
-                var matches = new Regex(twitchRegex).Matches(twitchUrl);
-                twitchUrl = matches[0].Groups[1].Value;
-            }
+            var urlState = twitch.GetTwitchUrlState(twitchUrl);
 
-            var userIsValid = false;
-
-            userIsValid = twitch.IsUserValid(twitchUrl.Trim()).Result;
-
-            if (!userIsValid)
+            if (urlState.Result != Twitch.TwitchUrlState.Ok)
             {
                 ReplyAsync("Twitch user is not valid");
                 return Task.CompletedTask;
             }
 
 
-            System.Collections.Generic.Dictionary<string, JToken> dict = twitch.TwitchQuery(Twitch.HelixStrings.Users, twitchUrl).Result;
+            Dictionary<string, JToken> dict = twitch.TwitchQuery(Twitch.HelixStrings.Users, twitchUrl).Result;
 
             if (streamers.FindOne(x => x.Id == user.Id) != null)
             {
@@ -355,7 +344,9 @@ namespace WhosLive.Modules
 
             if (message.Contains("@everyone"))
             {
-                return ReplyAsync("The server owner is disappointed in you for your use of `@`everyone. :rage:");
+                Context.Channel.DeleteMessageAsync(Context.Message);
+                var msg = ReplyAsync("The server owner is disappointed in you for your use of `@everyone`. :rage:");
+                return Task.CompletedTask;
             }
 
             LiteCollection<Streamer> streamers = null;
@@ -519,6 +510,68 @@ namespace WhosLive.Modules
             }
 
             return ReplyAsync($"[ {string.Join(", ", users)} ]");
+        }
+
+        [Command("edituser"), Alias("eu"), RequireUserPermission(GuildPermission.ManageChannels)]
+        public Task EditUser(IUser user, string newUrl)
+        {
+            if (user.IsBot)
+                return Task.CompletedTask;
+
+            if (string.IsNullOrWhiteSpace(newUrl))
+                return Task.CompletedTask;
+
+            if (!newUrl.Contains("http"))
+            {
+                return ReplyAsync("URL invalid");
+            }
+
+            LiteCollection<Streamer> streamers = null;
+
+            lock (dbLock)
+            {
+                streamers = database.GetCollection<Streamer>("streamers");
+            }
+
+            var urlState = twitch.GetTwitchUrlState(newUrl);
+
+            if (urlState.Result != Twitch.TwitchUrlState.Ok)
+            {
+                return ReplyAsync("Twitch URL invalid.");
+            }
+
+
+            Dictionary<string, JToken> dict = twitch.TwitchQuery(Twitch.HelixStrings.Users, newUrl).Result;
+
+            Streamer currentStreamer = null;
+
+            if ((currentStreamer = streamers.FindOne(x => x.Id == user.Id)) == null)
+            {
+                ReplyAsync("User does not exist in database");
+                return Task.CompletedTask;
+            }
+
+            currentStreamer.Name = (string)dict["login"];
+            currentStreamer.StreamUrl = "https://www.twitch.tv/" + dict["login"];
+            currentStreamer.AvatarUrl = (string)dict["profile_image_url"];
+
+            bool update = false;
+
+            lock (dbLock)
+            {
+                update = streamers.Update(currentStreamer);
+            }
+
+
+            if (!update)
+            {
+                ReplyAsync("Could not add user to the database");
+                return Task.CompletedTask;
+            }
+
+            ReplyAsync($"Added {user.Mention} to the database");
+
+            return Task.CompletedTask;
         }
 
         #endregion
